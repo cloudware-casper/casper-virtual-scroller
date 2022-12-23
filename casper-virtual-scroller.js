@@ -1,7 +1,7 @@
 import { LitElement, html, css, unsafeCSS } from 'lit';
-import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import 'wc-spinners/dist/spring-spinner.js';
+import '@lit-labs/virtualizer'
 
 class CasperVirtualScroller extends LitElement {
 
@@ -35,12 +35,6 @@ class CasperVirtualScroller extends LitElement {
       renderNoItems: {
         type: Function
       },
-      height: {
-        type: Number
-      },
-      width: {
-        type: Number
-      },
       unsafeRender: {
         type: Boolean
       },
@@ -53,16 +47,8 @@ class CasperVirtualScroller extends LitElement {
       unlistedItem: {
         type: Object
       },
-      _currentRow: {
-        type: Number,
-        attribute: false
-      },
       _cvsItems: {
         type: Array,
-        attribute: false
-      },
-      _setupDone: {
-        type: Boolean,
         attribute: false
       }
     }
@@ -82,11 +68,6 @@ class CasperVirtualScroller extends LitElement {
       box-shadow: rgb(25 59 103 / 5%) 0px 0px 0px 1px, rgb(28 55 90 / 16%) 0px 2px 6px -1px, rgb(28 50 79 / 38%) 0px 8px 24px -4px;
     }
 
-    .cvs__wrapper {
-      display: grid;
-      white-space: nowrap;
-    }
-
     .cvs__no-items {
       text-align: center;
       font-size: var(--cvs-font-size);
@@ -96,7 +77,7 @@ class CasperVirtualScroller extends LitElement {
     .cvs__item-row {
       font-size: var(--cvs-font-size);
       padding: 0.3575em 0.715em;
-      white-space: nowrap;
+      width: 100%;
     }
 
     .cvs__item-row[active] {
@@ -138,6 +119,8 @@ class CasperVirtualScroller extends LitElement {
     this._scrollDirection = 'none';
     this.idProp = 'id';
     this.textProp = 'name';
+    this._firstVisibileItem = -1;
+    this._lastVisibileItem = -1;
   }
 
   connectedCallback () {
@@ -147,7 +130,6 @@ class CasperVirtualScroller extends LitElement {
     this._renderLine = this.unsafeRender ? this._renderLineUnsafe : this._renderLineSafe;
     this.renderNoItems = this.renderNoItems || this._renderNoItems;
     this.renderPlaceholder = (this.renderPlaceholder || this._renderPlaceholder);
-    this._setupDone = false;
   }
 
   //***************************************************************************************//
@@ -160,86 +142,53 @@ class CasperVirtualScroller extends LitElement {
       return this._renderLoading();
     }
 
-    this._itemList = [];
-
     if (this.dataSize === 0 || (this._cvsItems && this._cvsItems.length === 0)) {
-      if (this.unlistedItem) {
-        // Only render unlisted item
-        return this._renderUnlisted();
-      } else {
+      if (!this.unlistedItem) {
         // No items
         return this.renderNoItems();
       }
     }
 
-    if (this._rowHeight === -1) {
-      // Initial render to calculate row height
-      return this._renderLine(this._cvsItems[0]);
-    }
-
-    if (this._setupDone === false) {
-      // Initial render to setup scroll height
-      return this._renderContainerWithoutItems();
-    }
-
     // Initial stuff done... Now do real work
-
-    // List size cant be bigger than dataSize
-    const listSize = Math.min(this.dataSize, Math.round(this._wrapperHeight / this._rowHeight));
-    if (!listSize) return;
-
-    // Current row cant go higher than this.dataSize-listSize and lower than 0
-    this._currentRow = Math.max(0, Math.min(this._currentRow,this.dataSize-listSize));
 
     let hasPlaceholders = false;
 
     // We might need to optimize this... O((log2*this._cvsItems.length)*listSize)
-    for (let idx = 0; idx < listSize; idx++) {
-      // Check if the item exists
-      const elementIdx = this._itemsBinarySearch(this._currentRow + idx);
-      if (elementIdx > -1) {
-        // Item exists - render it
-        this._itemList[idx] = this._cvsItems[elementIdx];
-      } else {
-        // Item does not exist - render placeholder
-        hasPlaceholders = true;
-        this._itemList[idx] = { listId: this._currentRow + idx, placeholder: true };
-      }
-    }
+    // for (let idx = 0; idx < listSize; idx++) {
+    //   // Check if the item exists
+    //   const elementIdx = this._itemsBinarySearch(this._currentRow + idx);
+    //   if (elementIdx > -1) {
+    //     // Item exists - render it
+    //     this._itemList[idx] = this._cvsItems[elementIdx];
+    //   } else {
+    //     // Item does not exist - render placeholder
+    //     hasPlaceholders = true;
+    //     this._itemList[idx] = { listId: this._currentRow + idx, placeholder: true };
+    //   }
+    // }
 
     // Request new items if we find a placeholder
-    if (hasPlaceholders) {
-      const placeholderPositions = this._itemList.filter(e => e.placeholder);
-      this.dispatchEvent(new CustomEvent('cvs-request-items', {
-        bubbles: true,
-        composed: true,
-        detail: {
-          direction: this._scrollDirection,
-          index: this._scrollDirection === 'up' ? placeholderPositions[placeholderPositions.length-1].listId : placeholderPositions[0].listId
-        }
-      }));
-    }
+    // if (hasPlaceholders) {
+    //   const placeholderPositions = this._itemList.filter(e => e.placeholder);
+    //   this.dispatchEvent(new CustomEvent('cvs-request-items', {
+    //     bubbles: true,
+    //     composed: true,
+    //     detail: {
+    //       direction: this._scrollDirection,
+    //       index: this._scrollDirection === 'up' ? placeholderPositions[placeholderPositions.length-1].listId : placeholderPositions[0].listId
+    //     }
+    //   }));
+    // }
 
     return html`
-      <style>
-        :host {
-          width: ${this.width ? (this.width+'px') : 'fit-content'};
-          height: ${(this._rowHeight * (listSize + (this.unlistedItem ? 1 : 0))) + 'px'};
-        }
-        .cvs__top-padding {
-          height: ${(this._currentRow * this._rowHeight) + 'px'};
-        }
-        .cvs__bottom-padding {
-          height: ${((this.dataSize - listSize - this._currentRow) * this._rowHeight) + 'px'};
-        }
-      </style>
-
-      <div class="cvs__wrapper">
-        <div class="cvs__top-padding"></div>
-          ${repeat(this._itemList, a => a.listId, this._renderLine.bind(this))}
-        <div class="cvs__bottom-padding"></div>
-        ${this.unlistedItem ? this._renderLine(this.unlistedItem) : ''}
-      </div>
+      <lit-virtualizer
+        id="list"
+        @visibilityChanged=${this._onVisibilityChanged}
+        .items=${this._cvsItems}
+        scroller
+        .renderItem=${item => this._renderLine(item)}>
+      </lit-virtualizer>
+      ${this.unlistedItem ? this._renderLine(this.unlistedItem) : ''}
     `;
   }
 
@@ -258,29 +207,15 @@ class CasperVirtualScroller extends LitElement {
     }
   }
 
-  async getUpdateComplete () {
-    await super.getUpdateComplete();
-
-    // Wait for all the rows to render
-    const rows = Array.from(this.shadowRoot.querySelectorAll('.cvs__item-row'));
-    await Promise.all(rows.map(el => el.updateComplete));
-    return true;
-  }
-
   //***************************************************************************************//
   //                               ~~~ Public functions~~~                                 //
   //***************************************************************************************//
 
   async initialSetup () {
-    this._currentRow = 0;
-    this._rowHeight = -1;
-    this._setupDone = false;
     if (this.dataSize === undefined || this.dataSize === 0) this.dataSize = this.items.length;
 
     this._cvsItems = JSON.parse(JSON.stringify(this.items));
     const offset = (this.startIndex || 0);
-
-    this._wrapperHeight = (this.height || Math.round(Number(this.style.maxHeight.slice(0,-2))) || 300 );
 
     // If there are no items no need to calculate rowHeight, scrollTop, etc...
     if (this._cvsItems.length === 0) return;
@@ -289,36 +224,9 @@ class CasperVirtualScroller extends LitElement {
       this._cvsItems[idx].listId = offset + idx + Math.min(this.dataSize - (offset + this._cvsItems.length) , 0);
     }
 
-    await this.updateComplete;
-
-    this._rowHeight = this.shadowRoot.querySelector('.cvs__item-row').getBoundingClientRect().height;
-
     this.requestUpdate();
 
     await this.updateComplete;
-
-    this.scrollTop = (offset * this._rowHeight);
-
-    // Current row cant go higher than this.dataSize-listSize and lower than 0
-    this._currentRow = Math.max(0, Math.min(this.dataSize, Math.round(this.scrollTop / this._rowHeight)));
-
-    this._wrapperHeight = Math.min(this._rowHeight*this.items.length, this._wrapperHeight);
-
-    this._setupDone = true;
-
-    this.requestUpdate();
-
-    await this.updateComplete;
-  }
-
-  updateHeight (height) {
-    this._wrapperHeight = height;
-    this.requestUpdate();
-  }
-
-  refreshHeight () {
-    this._wrapperHeight = (this.height || Math.round(Number(this.style.maxHeight.slice(0,-2))) || 300 );
-    this.requestUpdate();
   }
 
   appendBeginning (index, data) {
@@ -368,12 +276,9 @@ class CasperVirtualScroller extends LitElement {
     this._cvsItems = uniqueArray;
   }
 
-  getCurrentRow () {
-    return this._currentRow;
-  }
-
-  scrollToIndex (idx) {
-    this.scrollTop = idx * this._rowHeight;
+  scrollToIndex (idx, position='center') {
+    const virtualList = this.shadowRoot.getElementById('list');
+    if (virtualList) virtualList.scrollToIndex(idx, position);
   }
 
   scrollToId (id) {
@@ -389,16 +294,12 @@ class CasperVirtualScroller extends LitElement {
   //                              ~~~ Private functions~~~                                 //
   //***************************************************************************************//
 
-  _onScroll (event) {
-    if (this._scrollTicking) {
-      window.cancelAnimationFrame(this._scrollTicking);
-      this._scrollTicking = null;
-    }
-    this._scrollTicking = window.requestAnimationFrame(() => {
-      // Current row cant go higher than this.dataSize-listSize and lower than 0
-      this._currentRow = Math.max(0, Math.min(this.dataSize, Math.round(this.scrollTop / this._rowHeight)));
-    });
+  _onVisibilityChanged (event) {
+    this._firstVisibileItem = event.first;
+    this._lastVisibileItem = event.last;
+  }
 
+  _onScroll (event) {
     if (this.scrollTop < this._oldScrollTop) {
       this._scrollDirection = 'up';
     } else if (this.scrollTop > this._oldScrollTop) {
@@ -406,7 +307,6 @@ class CasperVirtualScroller extends LitElement {
     } else {
       this._scrollDirection = 'none';
     }
-
     this._oldScrollTop = this.scrollTop;
   }
 
@@ -434,27 +334,6 @@ class CasperVirtualScroller extends LitElement {
       <div class="cvs__placeholder">
         Loading data!
       </div>
-    `;
-  }
-
-  _renderContainerWithoutItems () {
-    const listSize = Math.min(this.dataSize, Math.round(this._wrapperHeight / this._rowHeight));
-
-    return html`
-      <style>
-        :host {
-          width: ${this.width ? (this.width+'px') : 'fit-content'};
-          height: ${(this._rowHeight * listSize) + 'px'};
-        }
-        .cvs__top-padding {
-          height: ${(this._currentRow * this._rowHeight) + 'px'};
-        }
-        .cvs__bottom-padding {
-          height: ${(((this.dataSize - listSize - this._currentRow) * this._rowHeight) + this._wrapperHeight) + 'px'};
-        }
-      </style>
-      <div class="cvs__top-padding"></div>
-      <div class="cvs__bottom-padding"></div>
     `;
   }
 
@@ -489,16 +368,11 @@ class CasperVirtualScroller extends LitElement {
     `
   }
 
-  _renderUnlisted () {
-    return html`
-      <style>
-        :host {
-          width: ${this.width ? (this.width+'px') : 'fit-content'};
-          height: ${this._rowHeight + 'px'};
-        }  
-      </style>
-      ${this._renderLine(this.unlistedItem)}
-    `;
+  _getVisibleItems () {
+    if (this._firstVisibileItem > -1 && this._lastVisibileItem > -1) {
+      return this._cvsItems.slice(this._firstVisibileItem, this._lastVisibileItem+1);
+    }
+    return [];
   }
 
   _lineClicked (item, event) {
@@ -514,38 +388,38 @@ class CasperVirtualScroller extends LitElement {
   }
 
   async _moveSelection (dir) {
-    const tmpItemList = JSON.parse(JSON.stringify(this._itemList));
+    const itemList = this._getVisibleItems();
 
     let listHasUnlisted = false
-    if (this.unlistedItem && (!tmpItemList || tmpItemList.length === 0 || tmpItemList[tmpItemList.length-1].listId >= this.dataSize-1) )  {
+    if (this.unlistedItem && (!itemList || itemList.length === 0 || itemList[itemList.length-1].listId >= this.dataSize-1) )  {
       listHasUnlisted = true;
-      tmpItemList.push(this.unlistedItem);
+      itemList.push(this.unlistedItem);
     }
 
-    if (dir && tmpItemList && tmpItemList.length > 0) {
-      if (this.selectedItem === undefined || tmpItemList.filter(e => e.id == this.selectedItem).length === 0) {
-        this.selectedItem = tmpItemList[0].id;
+    if (dir && itemList && itemList.length > 0) {
+      if (this.selectedItem === undefined || itemList.filter(e => e.id == this.selectedItem).length === 0) {
+        this.selectedItem = itemList[0].id;
       } else {
         let selectedIdx = 0;
-        for (let idx = 0; idx < tmpItemList.length; idx++) {
-          if (this.selectedItem == tmpItemList[idx].id) {
+        for (let idx = 0; idx < itemList.length; idx++) {
+          if (this.selectedItem == itemList[idx].id) {
             selectedIdx = idx;
             break;
           }
         }
-        if (dir === 'up' && (tmpItemList[selectedIdx].listId - 1 > -1 || this.unlistedItem)) {
-          this.scrollTop -= this._rowHeight;
-          if (tmpItemList[selectedIdx-1]) this.selectedItem = tmpItemList[selectedIdx-1].id;
-        } else if (dir === 'down' && (tmpItemList[selectedIdx].listId + 1 <= this.dataSize-1 || this.unlistedItem)) {
-          if (selectedIdx+1 > 1)  this.scrollTop += this._rowHeight;
-          if (tmpItemList[selectedIdx+1]) this.selectedItem = tmpItemList[selectedIdx+1].id;
+        if (dir === 'up' && (itemList[selectedIdx].listId - 1 > -1 || this.unlistedItem)) {
+          this.scrollToIndex(this._firstVisibileItem-1,'nearest');
+          if (itemList[selectedIdx-1]) this.selectedItem = itemList[selectedIdx-1].id;
+        } else if (dir === 'down' && (itemList[selectedIdx].listId + 1 <= this.dataSize-1 || this.unlistedItem)) {
+          if (selectedIdx+1 > 1) this.scrollToIndex(this._lastVisibileItem+1,'nearest');
+          if (itemList[selectedIdx+1]) this.selectedItem = itemList[selectedIdx+1].id;
         } 
       }
     }
   }
 
   _confirmSelection () {
-    let item = this._itemList.filter(e => e.id == this.selectedItem)?.[0];
+    let item = this._getVisibleItems().filter(e => e.id == this.selectedItem)?.[0];
     
     if (!item && this.unlistedItem) item = this.unlistedItem;
 
