@@ -44,9 +44,6 @@ class CasperVirtualScroller extends LitElement {
       loading: {
         type: Boolean
       },
-      unlistedItem: {
-        type: Object
-      },
       _cvsItems: {
         type: Array,
         attribute: false
@@ -121,6 +118,7 @@ class CasperVirtualScroller extends LitElement {
     this.textProp = 'name';
     this._firstVisibileItem = -1;
     this._lastVisibileItem = -1;
+    this._setupDone = false;
   }
 
   connectedCallback () {
@@ -143,52 +141,17 @@ class CasperVirtualScroller extends LitElement {
     }
 
     if (this.dataSize === 0 || (this._cvsItems && this._cvsItems.length === 0)) {
-      if (!this.unlistedItem) {
-        // No items
-        return this.renderNoItems();
-      }
+      return this.renderNoItems();
     }
-
-    // Initial stuff done... Now do real work
-
-    let hasPlaceholders = false;
-
-    // We might need to optimize this... O((log2*this._cvsItems.length)*listSize)
-    // for (let idx = 0; idx < listSize; idx++) {
-    //   // Check if the item exists
-    //   const elementIdx = this._itemsBinarySearch(this._currentRow + idx);
-    //   if (elementIdx > -1) {
-    //     // Item exists - render it
-    //     this._itemList[idx] = this._cvsItems[elementIdx];
-    //   } else {
-    //     // Item does not exist - render placeholder
-    //     hasPlaceholders = true;
-    //     this._itemList[idx] = { listId: this._currentRow + idx, placeholder: true };
-    //   }
-    // }
-
-    // Request new items if we find a placeholder
-    // if (hasPlaceholders) {
-    //   const placeholderPositions = this._itemList.filter(e => e.placeholder);
-    //   this.dispatchEvent(new CustomEvent('cvs-request-items', {
-    //     bubbles: true,
-    //     composed: true,
-    //     detail: {
-    //       direction: this._scrollDirection,
-    //       index: this._scrollDirection === 'up' ? placeholderPositions[placeholderPositions.length-1].listId : placeholderPositions[0].listId
-    //     }
-    //   }));
-    // }
 
     return html`
       <lit-virtualizer
         id="list"
         @visibilityChanged=${this._onVisibilityChanged}
         .items=${this._cvsItems}
-        scroller
+        @scroll=${this._onScroll}
         .renderItem=${item => this._renderLine(item)}>
       </lit-virtualizer>
-      ${this.unlistedItem ? this._renderLine(this.unlistedItem) : ''}
     `;
   }
 
@@ -211,74 +174,59 @@ class CasperVirtualScroller extends LitElement {
   //                               ~~~ Public functions~~~                                 //
   //***************************************************************************************//
 
-  async initialSetup () {
+  async initialSetup () {    
+    this._setupDone = false;
     if (this.dataSize === undefined || this.dataSize === 0) this.dataSize = this.items.length;
 
     this._cvsItems = JSON.parse(JSON.stringify(this.items));
     const offset = (this.startIndex || 0);
 
-    // If there are no items no need to calculate rowHeight, scrollTop, etc...
     if (this._cvsItems.length === 0) return;
 
     for (let idx = 0; idx < this._cvsItems.length; idx++) {
       this._cvsItems[idx].listId = offset + idx + Math.min(this.dataSize - (offset + this._cvsItems.length) , 0);
     }
 
+    for (let it = this._cvsItems[0].listId-1; it >= 0; it--) {
+      this._cvsItems.unshift({ listId: it, placeholder: true });
+    }
+
+    for (let it = this._cvsItems[0].listId; it < this.dataSize; it++) {
+      // Check if the item exists
+      const elementIdx = this._itemsBinarySearch(it);
+      if (elementIdx === -1) {
+        // Item does not exist - add placeholder
+        this._cvsItems.push({ listId: it, placeholder: true });
+      }
+    }
+
     this.requestUpdate();
 
     await this.updateComplete;
+
+    await this.shadowRoot.getElementById('list').layoutComplete;
+    this.scrollToIndex(this.startIndex,'start');
+    this._setupDone = true;
   }
 
   appendBeginning (index, data) {
     for (let idx = 0; idx < data.length; idx++) {
       data[idx].listId = idx + index;
+      this._cvsItems[data[idx].listId] = data[idx];
     }
-
-    const sortedArray = data.concat(this._cvsItems).sort((a,b) => (a.listId > b.listId) ? 1 : ((b.listId > a.listId) ? -1 : 0));
-    const simpleUniqueArray = [...new Set(sortedArray.map(i => i.listId))];
-
-    let uniqueArray = [];
-    let lastIdx = 0;
-    for (const it of simpleUniqueArray) {
-      for (let idx = lastIdx; idx < sortedArray.length; idx++) {
-        if (it == sortedArray[idx].listId) {
-          uniqueArray.push(sortedArray[idx]);
-          lastIdx = idx;
-          break;
-        };
-      }
-    }
-
-    this._cvsItems = uniqueArray;
     this.startIndex = index;
   }
 
   appendEnd (index, data) {
     for (let idx = 0; idx < data.length; idx++) {
       data[idx].listId = idx + index + Math.min(this.dataSize - (index + data.length), 0);
+      this._cvsItems[data[idx].listId] = data[idx];
     }
-
-    const sortedArray = this._cvsItems.concat(data).sort((a,b) => (a.listId > b.listId) ? 1 : ((b.listId > a.listId) ? -1 : 0));
-    const simpleUniqueArray = [...new Set(sortedArray.map(i => i.listId))];
-
-    let uniqueArray = [];
-    let lastIdx = 0;
-    for (const it of simpleUniqueArray) {
-      for (let idx = lastIdx; idx < sortedArray.length; idx++) {
-        if (it == sortedArray[idx].listId) {
-          uniqueArray.push(sortedArray[idx]);
-          lastIdx = idx;
-          break;
-        };
-      }
-    }
-
-    this._cvsItems = uniqueArray;
   }
 
   scrollToIndex (idx, position='center') {
     const virtualList = this.shadowRoot.getElementById('list');
-    if (virtualList) virtualList.scrollToIndex(idx, position);
+    if (virtualList && virtualList.childElementCount > 0) virtualList.scrollToIndex(idx, position);
   }
 
   scrollToId (id) {
@@ -297,17 +245,34 @@ class CasperVirtualScroller extends LitElement {
   _onVisibilityChanged (event) {
     this._firstVisibileItem = event.first;
     this._lastVisibileItem = event.last;
+
+    const visibleItems = this._getVisibleItems();
+    // Request new items if we find a placeholder
+    const placeholderItems = visibleItems.filter(i => i.placeholder);
+    if (placeholderItems && placeholderItems.length > 0 && this._setupDone) {
+      console.log('requesting items');
+      this.dispatchEvent(new CustomEvent('cvs-request-items', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          direction: this._scrollDirection,
+          index: this._scrollDirection === 'up' ? placeholderItems[placeholderItems.length-1].listId : placeholderItems[0].listId
+        }
+      }));
+    }
   }
 
   _onScroll (event) {
-    if (this.scrollTop < this._oldScrollTop) {
+    if (!event || !event.currentTarget || !event.currentTarget.scrollTop) return;
+
+    if (event.currentTarget.scrollTop < this._oldScrollTop) {
       this._scrollDirection = 'up';
-    } else if (this.scrollTop > this._oldScrollTop) {
+    } else if (event.currentTarget.scrollTop > this._oldScrollTop) {
       this._scrollDirection = 'down';
     } else {
       this._scrollDirection = 'none';
     }
-    this._oldScrollTop = this.scrollTop;
+    this._oldScrollTop = event.currentTarget.scrollTop;
   }
 
   _renderLineUnsafe (item) {
@@ -390,12 +355,6 @@ class CasperVirtualScroller extends LitElement {
   async _moveSelection (dir) {
     const itemList = this._getVisibleItems();
 
-    let listHasUnlisted = false
-    if (this.unlistedItem && (!itemList || itemList.length === 0 || itemList[itemList.length-1].listId >= this.dataSize-1) )  {
-      listHasUnlisted = true;
-      itemList.push(this.unlistedItem);
-    }
-
     if (dir && itemList && itemList.length > 0) {
       if (this.selectedItem === undefined || itemList.filter(e => e.id == this.selectedItem).length === 0) {
         this.selectedItem = itemList[0].id;
@@ -407,10 +366,10 @@ class CasperVirtualScroller extends LitElement {
             break;
           }
         }
-        if (dir === 'up' && (itemList[selectedIdx].listId - 1 > -1 || this.unlistedItem)) {
+        if (dir === 'up' && (itemList[selectedIdx].listId - 1 > -1)) {
           this.scrollToIndex(this._firstVisibileItem-1,'nearest');
           if (itemList[selectedIdx-1]) this.selectedItem = itemList[selectedIdx-1].id;
-        } else if (dir === 'down' && (itemList[selectedIdx].listId + 1 <= this.dataSize-1 || this.unlistedItem)) {
+        } else if (dir === 'down' && (itemList[selectedIdx].listId + 1 <= this.dataSize-1)) {
           if (selectedIdx+1 > 1) this.scrollToIndex(this._lastVisibileItem+1,'nearest');
           if (itemList[selectedIdx+1]) this.selectedItem = itemList[selectedIdx+1].id;
         } 
@@ -420,8 +379,6 @@ class CasperVirtualScroller extends LitElement {
 
   _confirmSelection () {
     let item = this._getVisibleItems().filter(e => e.id == this.selectedItem)?.[0];
-    
-    if (!item && this.unlistedItem) item = this.unlistedItem;
 
     if (item) {
       this.dispatchEvent(new CustomEvent('cvs-line-selected', {
