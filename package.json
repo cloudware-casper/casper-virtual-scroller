@@ -1,7 +1,7 @@
 {
   "name": "@cloudware-casper/casper-virtual-scroller",
   "main": "casper-virtual-scroller.js",
-  "version": "0.0.14",
+  "version": "0.0.16",
   "description": "Simple web component that implements a virtual scroller in lit.",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com/"

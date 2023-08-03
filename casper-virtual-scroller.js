@@ -35,6 +35,15 @@ class CasperVirtualScroller extends LitElement {
       renderNoItems: {
         type: Function
       },
+      renderSeparator: {
+        type: Function
+      },
+      height: {
+        type: Number
+      },
+      width: {
+        type: Number
+      },
       unsafeRender: {
         type: Boolean
       },
@@ -74,10 +83,11 @@ class CasperVirtualScroller extends LitElement {
     .cvs__item-row {
       font-size: var(--cvs-font-size);
       padding: 0.3575em 0.715em;
-      width: 100%;
+      white-space: nowrap;
+      cursor: default;
     }
 
-    .cvs__item-row[active] {
+    .cvs__item-row[selectable][active] {
       background-color: var(--dark-primary-color);
       color: white;
     }
@@ -87,7 +97,7 @@ class CasperVirtualScroller extends LitElement {
       opacity: 0.5;
     }
 
-    .cvs__item-row:hover {
+    .cvs__item-row[selectable]:hover {
       background-color: var(--primary-color);
       color: white;
       cursor: pointer;
@@ -128,6 +138,8 @@ class CasperVirtualScroller extends LitElement {
     this._renderLine = this.unsafeRender ? this._renderLineUnsafe : this._renderLineSafe;
     this.renderNoItems = this.renderNoItems || this._renderNoItems;
     this.renderPlaceholder = (this.renderPlaceholder || this._renderPlaceholder);
+    this.renderSeparator = this.renderSeparator || this._renderSeparator;
+    this._setupDone = false;
   }
 
   //***************************************************************************************//
@@ -276,19 +288,23 @@ class CasperVirtualScroller extends LitElement {
   }
 
   _renderLineUnsafe (item) {
+    if (item.separator) return this.renderSeparator(item);
+
     return html`
       <style>
         ${this.lineCss ? unsafeCSS(this.lineCss) : ''}
       </style>
-      <div class="cvs__item-row" @click="${this._lineClicked.bind(this, item)}" ?active="${this.selectedItem && item[this.idProp] == this.selectedItem}" ?disabled=${item.disabled}>
+      <div class="cvs__item-row" selectable @click="${this._lineClicked.bind(this, item)}" ?active="${this.selectedItem && item[this.idProp] == this.selectedItem}" ?disabled=${item.disabled}>
         ${item.unsafeHTML ? unsafeHTML(item.unsafeHTML) : this.renderPlaceholder() }
       </div>
     `;
   }
 
   _renderLineSafe (item) {
+    if (item.separator) return this.renderSeparator(item);
+
     return html`
-      <div class="cvs__item-row" @click="${this._lineClicked.bind(this, item)}" ?active="${this.selectedItem && item[this.idProp] == this.selectedItem}" ?disabled=${item.disabled}>
+      <div class="cvs__item-row" selectable @click="${this._lineClicked.bind(this, item)}" ?active="${this.selectedItem && item[this.idProp] == this.selectedItem}" ?disabled=${item.disabled}>
         ${this.renderLine ? this.renderLine(item) : (item[this.textProp] ? item[this.textProp] : this.renderPlaceholder()) }
       </div>
     `;
@@ -338,6 +354,19 @@ class CasperVirtualScroller extends LitElement {
       return this._cvsItems.slice(this._firstVisibileItem, this._lastVisibileItem+1);
     }
     return [];
+  }
+
+  _renderSeparator (item) {
+    return html`
+      <style> 
+        .separator {
+          font-weight: bold;
+        }
+      </style>
+      <div class="cvs__item-row">
+        <div class="separator">${item[this.textProp]}</div>
+      </div>
+    `;
   }
 
   _lineClicked (item, event) {
